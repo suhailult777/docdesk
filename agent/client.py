@@ -277,7 +277,8 @@ class SwitchAgent:
                     log.error("socket closed with %s, not reconnecting", code)
                     return
                 log.warning("socket closed (%s), reconnecting in %.0fs", code, backoff)
-            except (OSError, websockets.InvalidStatus) as e:
+            except (OSError, websockets.InvalidHandshake, asyncio.TimeoutError) as e:
+                # Includes InvalidMessage, which a restarting server produces.
                 log.warning("connect failed (%s), retrying in %.0fs", e, backoff)
             self.connected.clear()
             self._persist()

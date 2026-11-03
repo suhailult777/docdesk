@@ -20,6 +20,8 @@ command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 1; }
 curl -fsSL "${raw}/.env.example" -o "$dir/.env"
 chmod 600 "$dir/.env"
 sed -i "s|^SWITCH_VERSION=.*|SWITCH_VERSION=0.31.0|" "$dir/.env"
+# Lets `!assign-agent @docdesk` work, so people need not tag the agent.
+sed -i "s|^FEATURE_FLAGS_ENABLED=.*|FEATURE_FLAGS_ENABLED=follow_the_conversation|" "$dir/.env"
 for key in DB_PASSWORD DB_OWNER_PASSWORD AGENT_REGISTRATION_TOKEN GATEWAY_ADMIN_PASSWORD \
            MATTERMOST_ADMIN_PASSWORD MATTERMOST_USER_PASSWORD; do
   sed -i "s|^${key}=.*|${key}=$(openssl rand -hex 24)|" "$dir/.env"

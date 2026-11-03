@@ -109,3 +109,33 @@ def test_register_uses_registration_key():
     assert seen["auth"] == "Bearer regkey"
     assert seen["body"]["integration_profile"]["connection_model"] == "always_on"
     assert "overwrite" not in seen["body"]
+
+
+async def test_reconnects_after_server_restart(tmp_path):
+    """A restarting server gives a bad handshake; the client must retry."""
+    import websockets
+
+    agent = make_agent(tmp_path)
+    attempts = []
+
+    class Conn:
+        def __init__(self, url, **kw):
+            attempts.append(url)
+
+        async def __aenter__(self):
+            if len(attempts) == 1:
+                raise websockets.InvalidMessage("did not receive a valid HTTP response")
+            raise Stop("test done")
+
+        async def __aexit__(self, *a):
+            return False
+
+    agent._connect = Conn
+    import agent.client as mod
+    real_sleep = mod.asyncio.sleep
+    mod.asyncio.sleep = lambda s: real_sleep(0)
+    try:
+        await agent.run()
+    finally:
+        mod.asyncio.sleep = real_sleep
+    assert len(attempts) == 2
