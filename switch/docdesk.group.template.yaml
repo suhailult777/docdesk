@@ -1,0 +1,93 @@
+# DocDesk: a help room and a docs maintenance room, linked.
+#
+# Run it from Switch Console (Templates, Import template) or let
+# `make setup` run it through the agent operation create_room_from_yaml.
+#
+# docdesk is a custom agent that joins over the agent protocol (agent/ in
+# this repo), so the template names it instead of creating it. The
+# Console-run doc-fixer (OpenCode) joins #acme-docs-maint on Day 2.
+version: 1
+
+params:
+  team:
+    type: string
+    description: Prefix for the room names
+    pattern: "[a-z][a-z0-9-]*"
+    default: acme
+  docdesk_agent:
+    type: string
+    description: Name of the DocDesk protocol agent, which must already be registered
+    default: docdesk
+  teammate:
+    type: string
+    description: Mattermost username of a teammate to invite
+    default: user
+  repo_url:
+    type: string
+    description: The repository DocDesk answers from
+    default: https://github.com/suhailult777/acme-shop-demo
+
+group:
+  name: "{team} docs desk"
+  description: Questions answered from {repo_url}, and the room where stale docs get fixed
+
+rooms:
+  - name: "{team}-help"
+    description: Ask anything about the {team} repo. DocDesk answers with citations.
+    agents: ["{docdesk_agent}"]
+    users: ["{$creator}", "{teammate}"]
+    instructions: |
+      This is the {team} help room. People ask how to run, configure and use
+      the code in {repo_url}. {docdesk_agent} answers every question here in
+      the question's thread, citing files, lines and the commit it read.
+      If an answer is wrong, reply in the same thread and say what is right:
+      {docdesk_agent} checks the correction against the code and, when the
+      code agrees, files a doc gap in {team}-docs-maint.
+    kickoff: |
+      Welcome to {team}-help. Ask a question about {repo_url} and mention
+      @{docdesk_agent}, for example: @{docdesk_agent} how do I run the shop locally?
+
+  - name: "{team}-docs-maint"
+    description: Where doc gaps from {team}-help are fixed, verified and approved
+    agents: ["{docdesk_agent}"]
+    users: ["{$creator}", "{teammate}"]
+    instructions: |
+      This room maintains the docs of {repo_url}. {docdesk_agent} brings doc
+      gaps here from {team}-help with the question, the wrong answer, the
+      correction and the evidence from the code. A fixer agent edits the doc,
+      runs the doc's own commands to prove they work and opens a pull request.
+      Nothing merges until the docs-owner approves it in this room.
+    roles:
+      - name: docs-owner
+        exclusive: true
+        instructions: |
+          You own the docs of {repo_url}. Review each doc fix pull request:
+          the diff, the evidence and the verify output. Approve or decline it
+          here so the decision is recorded.
+    docs:
+      - name: doc-gap-ledger
+        description: Every doc gap DocDesk found, and what happened to it
+        instructions: |
+          One row per gap. DocDesk appends rows; the fixer updates the status
+          and PR columns. Never delete a row.
+        content: |
+          # Doc gap ledger
+
+          | id | file | what was wrong | evidence | status | PR |
+          |---|---|---|---|---|---|
+      - name: docs-style-guide
+        description: How doc fixes should be written
+        instructions: Follow this for every doc change in {repo_url}.
+        content: |
+          # Docs style guide
+
+          - Change only what the gap is about. One gap, one pull request.
+          - Every command in a doc must run as written. Put it in a fenced
+            bash block so the verifier can run it.
+          - Name exact files, scripts and environment variables.
+          - Short sentences. No marketing words.
+
+links:
+  - from: "{team}-help"
+    to: "{team}-docs-maint"
+    label: doc gaps
