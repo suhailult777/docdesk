@@ -86,7 +86,7 @@ class OpenCodeLLM:
 
     name = "opencode"
 
-    def __init__(self, model: str = "opencode/deepseek-v4.1-flash-free", binary: str | None = None, timeout: int = 90):
+    def __init__(self, model: str = "opencode/deepseek-v4.1-flash-free", binary: str | None = None, timeout: int = 60):
         self.model = model
         self.binary = binary or shutil.which("opencode") or os.path.expanduser("~/.local/bin/opencode")
         self.timeout = timeout
@@ -102,6 +102,7 @@ class OpenCodeLLM:
             p = subprocess.run(
                 [self.binary, "run", "-m", self.model, text],
                 capture_output=True, text=True, timeout=self.timeout, cwd="/tmp",
+                stdin=subprocess.DEVNULL,  # opencode waits on an open stdin when run in the background
             )
         except subprocess.TimeoutExpired as e:
             raise LLMError("opencode timed out") from e
