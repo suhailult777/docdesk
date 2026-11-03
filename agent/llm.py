@@ -86,7 +86,7 @@ class OpenCodeLLM:
 
     name = "opencode"
 
-    def __init__(self, model: str = "opencode/deepseek-v4.1-flash-free", binary: str | None = None, timeout: int = 60):
+    def __init__(self, model: str = "opencode/deepseek-v4.1-flash-free", binary: str | None = None, timeout: int = 35):
         self.model = model
         self.binary = binary or shutil.which("opencode") or os.path.expanduser("~/.local/bin/opencode")
         self.timeout = timeout
