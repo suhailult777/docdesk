@@ -243,6 +243,9 @@ class SwitchAgent:
             self.rooms = list(data.get("rooms") or [])
         if frame.get("id") is not None:
             self.cursor = frame["id"]
+            # Save the cursor per event, so a restart resumes after it and
+            # does not replay (and re-answer) what we already handled.
+            self._persist()
         for h in self.handlers.get(kind, []):
             # Never block the read loop: a slow LLM call must not delay pongs.
             t = asyncio.create_task(self._safe(h, data))

@@ -26,7 +26,10 @@ def ensure_repo(settings: Settings) -> None:
     """Clone the target repo on first run, pull on later runs."""
     d = settings.repo_dir
     if (d / ".git").exists():
-        subprocess.run(["git", "-C", str(d), "pull", "--ff-only", "-q"], check=False)
+        try:
+            subprocess.run(["git", "-C", str(d), "pull", "--ff-only", "-q"], check=False, timeout=20)
+        except subprocess.TimeoutExpired:
+            log.warning("git pull timed out, indexing the checkout as it is")
         return
     d.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "clone", "-q", settings.repo_url, str(d)], check=True)
