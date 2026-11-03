@@ -1,0 +1,5 @@
+how do I run the shop locally?
+which environment variable sets the port?
+how do I place an order with the API?
+how do I list all products?
+how do I run the tests?
