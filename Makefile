@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 PY ?= .venv/bin/python
 STACK_DIR ?= .switch-stack
-COMPOSE := docker compose --profile collab --profile gateway
+COMPOSE := compose --profile collab --profile gateway
 DOCKER ?= docker
 export DOCDESK_ENV_FILE ?= $(CURDIR)/.env
 
