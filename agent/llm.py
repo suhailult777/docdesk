@@ -125,7 +125,8 @@ class FakeLLM:
     def complete(self, system: str, prompt: str) -> str:
         q = prompt.split("Question:", 1)[-1].strip().splitlines()[0] if "Question:" in prompt else ""
         qwords = {w for w in re.findall(r"[a-z0-9_]+", q.lower()) if len(w) > 2}
-        sources = re.findall(r"^\[(\d+)\] (\S+)\n(.*?)(?=^\[\d+\] |\Z)", prompt, flags=re.S | re.M)
+        src_text = prompt.split("\nQuestion:", 1)[0]
+        sources = re.findall(r"^\[(\d+)\] (\S+)\n(.*?)(?=^\[\d+\] |\Z)", src_text, flags=re.S | re.M)
         lines: list[str] = []
         for num, _path, body in sources[:3]:
             best = sorted(
