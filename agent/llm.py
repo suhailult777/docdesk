@@ -128,7 +128,7 @@ class FakeLLM:
         lines: list[str] = []
         for num, _path, body in sources[:3]:
             best = sorted(
-                (ln.strip() for ln in body.splitlines() if ln.strip() and not ln.startswith("```")),
+                (ln.strip() for ln in body.splitlines() if ln.strip() and not ln.lstrip().startswith(("```", "#", "|---"))),
                 key=lambda ln: -len(qwords & set(re.findall(r"[a-z0-9_]+", ln.lower()))),
             )
             if best:
