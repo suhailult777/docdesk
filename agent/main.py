@@ -42,6 +42,8 @@ class DocDesk:
         self.llm = llm
         self.name = name
         self.seen: set[str] = set()
+        # One LLM call at a time: the OpenCode CLI times out when two runs overlap.
+        self.llm_lock = asyncio.Lock()
 
     def should_answer(self, data: dict[str, Any]) -> bool:
         p = data.get("payload") or {}
@@ -64,7 +66,8 @@ class DocDesk:
         thread = p.get("thread_id") or p.get("message_id")
         t0 = time.monotonic()
         log.info("question from %s in %s: %r", p.get("sender_name"), data.get("room_id"), question)
-        a = await asyncio.to_thread(answer, question, self.index, self.llm)
+        async with self.llm_lock:
+            a = await asyncio.to_thread(answer, question, self.index, self.llm)
         await self.agent.reply(data["room_id"], a.text, thread)
         log.info(
             "answered in %.1fs via %s, confidence %.2f, cites %s",
