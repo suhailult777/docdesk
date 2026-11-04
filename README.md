@@ -17,11 +17,13 @@ Built for the Flip the Switch hackathon, Track 01 (Best Business Workflow). Stat
 ## What DocDesk does (the loop)
 
 1. A teammate asks in `#acme-help`. DocDesk answers in the thread with citations to `file:lines@commit`.
-2. Someone replies "that's outdated". DocDesk checks the claim against the code and `git log` before it believes it. *(Day 2)*
+2. Someone replies in the thread "that's outdated, it's `PORT` now". DocDesk checks the claim against the code
+   (`git grep`) and the history (`git log -S`) before it believes it, and says which file, line and commit agree.
 3. If the code agrees, DocDesk logs a gap in the `doc-gap-ledger` room document and hands it to `@doc-fixer`
-   in the linked `#acme-docs-maint` room, with the question, the wrong answer, the correction and the evidence. *(Day 2)*
-4. doc-fixer (OpenCode run by Switch Console, free model) edits the doc, runs the doc's own commands in a
-   throwaway container and opens a PR. *(Day 2)*
+   in the linked `#acme-docs-maint` room, with the question, the wrong answer, the correction and the evidence.
+4. doc-fixer edits only the listed docs (a free OpenRouter model, then OpenCode, then the checked term swap),
+   runs the doc's own commands in `docker run --network none` before and after, and opens a PR only if every
+   changed command passes. It reports the PR to DocDesk, which updates the ledger and the original thread.
 5. The `@docs-owner` approves in chat; Switch records who approved. Nothing merges without it. *(Day 3)*
 6. DocDesk re-indexes and replies in the original thread: "Fixed in PR #N, here is the corrected answer." *(Day 3)*
 
@@ -32,7 +34,8 @@ Built for the Flip the Switch hackathon, Track 01 (Best Business Workflow). Stat
 | Rooms | `#acme-help` (questions) and `#acme-docs-maint` (fixes), bridged to Mattermost |
 | Linked rooms | `acme-help` links to `acme-docs-maint` ("doc gaps"), so gaps travel with their context |
 | Custom protocol agent | `docdesk` (this repo) registers over the agent protocol: WebSocket events, HTTP ops |
-| Console-run agent | `doc-fixer`, OpenCode with a free model, started by Switch Console *(Day 2)* |
+| Second protocol agent | `doc-fixer` (`agent/fixer.py`): picks up handoffs in `#acme-docs-maint`, opens verified PRs. (Plan: run it from Switch Console; Console is a desktop app, so the box runs it headless for now.) |
+| Targeted messages | DocDesk hands a gap to `@doc-fixer`; the fixer reports back to `@docdesk` with a status block |
 | Role | `docs-owner` in `#acme-docs-maint`, so approval goes to a job, not a person's name |
 | Room documents | `doc-gap-ledger` (shared memory of gaps) and `docs-style-guide` (rules the fixer follows) |
 | Main agent | `!assign-agent @docdesk` in `#acme-help`, so people can ask without tagging |
@@ -57,7 +60,10 @@ and the one-step setup all come from Switch.
    client.py  protocol client                     edits docs, runs their commands,
    rag.py     index of docs + code                opens the PR, waits for approval
    answer.py  cited answers
-   llm.py     Gemini / Groq / OpenCode / offline
+   llm.py     OpenRouter / Gemini / Groq / OpenCode / offline
+   corrections.py  check a correction: git grep + git log -S
+   ledger.py  gap ids, doc-gap-ledger room doc, handoff
+   verify.py  doc commands in docker --network none
           |
           v
    target repo: github.com/suhailult777/acme-shop-demo
@@ -81,7 +87,8 @@ Two gotchas we hit on Switch 0.31.0:
 ## Run it in 10 minutes
 
 Prerequisites: Docker with Compose, Python 3.11+, `git`, `curl`, `openssl`. Optional: the OpenCode CLI
-(`npm i -g opencode-ai`) for a free LLM with no key, or a free Gemini or Groq key.
+(`npm i -g opencode-ai`) for a free LLM with no key, or a free OpenRouter key (free models), and `gh`
+logged in for the doc-fixer's pull requests.
 
 ```bash
 git clone https://github.com/suhailult777/docdesk && cd docdesk
@@ -90,8 +97,13 @@ cp .env.example .env         # fill in later steps; leave keys empty to use the 
 make up                      # downloads the pinned Switch 0.31.0 stack into .switch-stack/ and starts it
 make regkey                  # creates a registration key in the Gateway, saves it to .env
 make setup                   # registers docdesk, creates #acme-help and #acme-docs-maint from the template
-make run                     # starts the agent (leave it running)
-make demo                    # in a second terminal: asks the seed questions in #acme-help as the teammate
+make verify-image            # builds the sandbox image the fixer runs doc commands in
+make run                     # starts DocDesk (leave it running)
+make run-fixer               # second terminal: starts doc-fixer
+make demo                    # third terminal: asks the seed questions in #acme-help as the teammate
+.venv/bin/python scripts/demo_loop.py "how do I change the port?" \
+  'That is outdated: we use `npm run dev` and the server reads `PORT` now, not `SHOP_PORT`.'
+                             # the whole loop: answer, correction, gap, verified PR, update in the thread
 ```
 
 Then open Mattermost at http://localhost:8065 (user `user`, password `MATTERMOST_USER_PASSWORD` in
@@ -105,8 +117,13 @@ Switch Console 0.40.1 for the fixer.
 
 - Answers only from retrieved sources, with citations; below a confidence threshold DocDesk says
   "I don't know from the repo" instead of guessing.
-- Corrections are checked against code and commit history before they become a gap. *(Day 2)*
-- Doc commands run in `docker run --network none` before a human sees the fix. *(Day 2)*
+- Corrections are checked against code and commit history before they become a gap. A claim the code does
+  not back gets "I could not confirm that" and no gap.
+- Doc commands run in `docker run --network none` (512 MB, 256 processes, all capabilities dropped) before a
+  human sees the fix. Server commands must answer on the port they set; `curl` fails on HTTP errors.
+- OpenCode runs with edit-only permissions inside its own checkout (no shell, no web, no outside paths);
+  for answers it gets no tools at all.
+- Switch `@names` are put in code spans in PR bodies so GitHub never pings a stranger with the same name.
 - Merge only after a recorded `@docs-owner` approval. *(Day 3)*
 - Secrets live in `.env` (git-ignored) or a file outside the repo (`DOCDESK_ENV_FILE`); `make scan` checks
   tracked files before every push.
@@ -122,7 +139,8 @@ thread handling. GitHub Actions runs them on every push.
 
 - **Day 1 (done):** Switch 0.31.0 stack, protocol client, repo index with citations, LLM layer, room template,
   DocDesk answering in `#acme-help` threads, Makefile, tests.
-- **Day 2:** correction detection with evidence, ledger updates, handoff to doc-fixer, verify sandbox, PR.
+- **Day 2 (done):** correction check with evidence, ledger room document, handoff to doc-fixer, sandbox
+  verification, PR, status back to the original thread. OpenRouter free models as the main LLM.
 - **Day 3:** approval before merge, re-index and close the loop in the thread, hardening.
 - **Day 4:** video, blog post, submission.
 
