@@ -159,6 +159,9 @@ class SwitchAgent:
         self.rooms: list[str] = []
         self.handlers: dict[str, list[Handler]] = {}
         self.connected = asyncio.Event()
+        # Ops run against "the connected room", so connect_to_room plus the
+        # ops after it must not interleave with another handler's.
+        self.room_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
 
     # ---- operations ----------------------------------------------------
@@ -184,11 +187,12 @@ class SwitchAgent:
 
     async def reply(self, room_id: str, body: str, thread_id: str | None) -> Any:
         """Claim the room for this connection, then post in the thread."""
-        await self.op("connect_to_room", room_id=room_id, include_general_instructions=False)
-        args: dict[str, Any] = {"body": body}
-        if thread_id:
-            args["thread_id"] = thread_id
-        return await self.op("post_message", **args)
+        async with self.room_lock:
+            await self.op("connect_to_room", room_id=room_id, include_general_instructions=False)
+            args: dict[str, Any] = {"body": body}
+            if thread_id:
+                args["thread_id"] = thread_id
+            return await self.op("post_message", **args)
 
     # ---- events --------------------------------------------------------
     def on(self, event: str, handler: Handler) -> None:
