@@ -1,7 +1,7 @@
 """One-time Switch setup for the demo.
 
-1. Register the docdesk agent with a registration key (once; the key is
-   kept in .state/, which git ignores).
+1. Register the docdesk and doc-fixer agents with a registration key (once;
+   their keys are kept in .state/, which git ignores).
 2. Provision the room group from switch/docdesk.group.template.yaml with
    the agent operation create_room_from_yaml, as the agent's owner.
 3. Save the created room ids to .state/rooms.json.
@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent.client import SwitchAgent, SwitchError, load_or_register  # noqa: E402
 from agent.config import ROOT, Settings  # noqa: E402
+from agent.fixer import DESCRIPTION as FIXER_DESCRIPTION  # noqa: E402
 from agent.main import DESCRIPTION  # noqa: E402
 
 TEMPLATE = ROOT / "switch" / "docdesk.group.template.yaml"
@@ -31,6 +32,12 @@ async def main() -> int:
         s.creds_path, s.switch_api, s.registration_key, s.agent_name, DESCRIPTION, "DocDesk"
     )
     print(f"agent {s.agent_name}: {creds.agent_id}")
+    fixer = s.env.get("DOCDESK_FIXER_NAME") or "doc-fixer"
+    fixer_creds = load_or_register(
+        s.state_dir / f"{fixer}.agent.json", s.switch_api, s.registration_key, fixer,
+        FIXER_DESCRIPTION, "doc-fixer",
+    )
+    print(f"agent {fixer}: {fixer_creds.agent_id}")
     agent = SwitchAgent(s.switch_api, creds)
     rooms_file = s.state_dir / "rooms.json"
 
@@ -40,12 +47,19 @@ async def main() -> int:
     if "acme-help" in names and "acme-docs-maint" in names:
         print("rooms already exist, skipping template")
         rooms = {"acme-help": names["acme-help"], "acme-docs-maint": names["acme-docs-maint"]}
+        try:  # rooms made before doc-fixer existed: add it to the docs room
+            await agent.op("invite_agent_to_room", with_connection=False,
+                           room_id=rooms["acme-docs-maint"], agent_name=fixer)
+            print(f"{fixer} is in acme-docs-maint")
+        except SwitchError as e:
+            print(f"could not invite {fixer}: {e}", file=sys.stderr)
     else:
         try:
             result = await agent.op(
                 "create_room_from_yaml", with_connection=False,
                 yaml=TEMPLATE.read_text(),
-                inputs={"teammate": s.teammate, "docdesk_agent": s.agent_name, "repo_url": s.repo_url},
+                inputs={"teammate": s.teammate, "docdesk_agent": s.agent_name, "fixer_agent": fixer,
+                        "repo_url": s.repo_url},
             )
         except SwitchError as e:
             print(f"template run failed: {e}", file=sys.stderr)
