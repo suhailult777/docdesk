@@ -128,7 +128,11 @@ def run_in_sandbox(repo: Path, cmds: list[Command], image: str = IMAGE, timeout:
         p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return [Result(c, False, "sandbox timed out") for c in cmds]
-    return parse_output(p.stdout + p.stderr, cmds)
+    results = parse_output(p.stdout + p.stderr, cmds)
+    if p.returncode != 0 and not any("### rc" in ln for ln in p.stdout.splitlines()):
+        err = (p.stderr.strip().splitlines() or ["unknown error"])[-1][:160]
+        results = [Result(r.cmd, False, f"sandbox error: {err}") for r in results]
+    return results
 
 
 def parse_output(out: str, cmds: list[Command]) -> list[Result]:

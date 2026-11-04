@@ -65,3 +65,15 @@ def test_compare_blocks_changed_failures_and_regressions_only():
     bad = [res("PORT=1 npm start", False), res("npm test", False)]
     v = compare(before, bad)
     assert not v.ok and [r.cmd.text for r in v.blocking] == ["PORT=1 npm start", "npm test"]
+
+
+def test_sandbox_error_is_reported(monkeypatch, tmp_path):
+    import subprocess
+    from agent import verify
+
+    class P:
+        returncode, stdout, stderr = 125, "", "docker: permission denied while trying to connect\n"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: P())
+    r = verify.run_in_sandbox(tmp_path, [Command("a.md", "npm test", False)])
+    assert not r[0].ok and r[0].detail.startswith("sandbox error: docker: permission denied")
