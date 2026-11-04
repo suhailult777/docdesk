@@ -186,7 +186,11 @@ class DocDesk:
             return
         async with self.room_lock:
             await self.ledger.sync()
-        if g.pr:
+        if g.pr and "another gap" in g.status:
+            msg = (f"Update on doc gap {g.id}: the doc fix is in {g.pr}. The commands it changed were run in a "
+                   "sandbox; some could only be tried once another open doc gap is fixed. "
+                   "It merges after the docs owner approves it in #acme-docs-maint.")
+        elif g.pr:
             msg = (f"Update on doc gap {g.id}: the doc fix is in {g.pr} and its commands passed in a sandbox. "
                    "It merges after the docs owner approves it in #acme-docs-maint.")
         else:

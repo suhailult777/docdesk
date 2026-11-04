@@ -307,7 +307,7 @@ class Fixer:
                 missing = [r for r in roles if r not in held]
                 roles = [r for r in roles if r in held]
                 if missing:
-                    body = body.replace("Please review", " ".join(f"@{m}" for m in missing) + ": please review", 1)
+                    body = body.replace("Please review", " and ".join(missing) + ": please review", 1)
                     if self.owner_user:
                         names = [*names, self.owner_user]
             if names or roles:
@@ -370,7 +370,9 @@ class Fixer:
 
     async def report(self, room: str, thread: str, gap: dict[str, Any], r: FixResult) -> None:
         if r.ok:
-            status = {"gap": gap["gap"], "status": "PR open, verified", "pr": r.pr_url,
+            partly = bool(r.verdict and r.verdict.unchecked)
+            label = "PR open, verified, some steps wait on another gap" if partly else "PR open, verified"
+            status = {"gap": gap["gap"], "status": label, "pr": r.pr_url,
                       "help_room_id": gap.get("help_room_id"), "thread_id": gap.get("thread_id")}
             body = (f"Doc fix for {gap['gap']} is ready for review: {r.pr_url}\n"
                     f"Changed: {', '.join(f'`{f}`' for f in r.files)} (edited with {r.editor}).\n"
