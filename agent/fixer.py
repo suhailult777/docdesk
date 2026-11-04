@@ -177,13 +177,18 @@ def pr_title(gap: dict[str, Any]) -> str:
     return f"docs: fix doc gap {gap['gap']}" + (f" ({reps})" if reps else "")
 
 
+def no_github_mentions(text: str) -> str:
+    """Switch names like @user are real GitHub accounts: put them in code spans so GitHub never pings them."""
+    return re.sub(r"(?<![\w`])@([\w][\w.-]*)", r"`@\1`", text)
+
+
 def pr_body(gap: dict[str, Any], handoff: str, verdict: Verdict, before_report: str, editor: str) -> str:
     facts = handoff.split("```")[0].strip()
-    return (
+    return no_github_mentions(
         f"Opened by the DocDesk doc-fixer agent from Switch room #acme-docs-maint (edited with {editor}).\n\n"
         f"## Doc gap {gap['gap']}\n\n{facts}\n\n"
         f"## Sandbox check\n\nBefore the fix:\n\n{before_report}\n\nAfter the fix:\n\n{verdict.report()}\n\n"
-        "## Review\n\nDocs owner (@docs-owner in Switch): please review the diff and approve or decline in "
+        "## Review\n\nDocs owner (the docs-owner role in Switch): please review the diff and approve or decline in "
         "#acme-docs-maint. This PR is not merged until you approve.\n"
     )
 

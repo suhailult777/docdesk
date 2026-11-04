@@ -125,7 +125,7 @@ def handoff_text(gap: Gap, repo_url: str) -> str:
         f"- Evidence: {gap.evidence}\n"
         f"- Files to fix: {files}\n"
         "Please fix only these files, follow docs-style-guide, run the doc's commands in the sandbox "
-        "and open a pull request for @docs-owner to review.\n\n"
+        "and open a pull request for the docs owner to review.\n\n"
         f"```{HANDOFF_MARK}\n{json.dumps(payload)}\n```"
     )
 

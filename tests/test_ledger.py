@@ -30,7 +30,7 @@ def test_handoff_roundtrip():
     g = gap()
     g.id = "G-1"
     text = handoff_text(g, "https://github.com/o/r")
-    assert "Doc gap **G-1**" in text and "@docs-owner" in text
+    assert "Doc gap **G-1**" in text and "docs owner" in text
     data = parse_handoff(text)
     assert data["gap"] == "G-1" and data["files"] == ["README.md"] and data["replacements"] == [["SHOP_PORT", "PORT"]]
     assert parse_handoff("no block here") is None

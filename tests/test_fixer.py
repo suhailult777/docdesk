@@ -37,7 +37,7 @@ def test_fix_gap_falls_back_verifies_and_opens_pr(shop, tmp_path):
     assert "fallback" in r.editor
     assert opened["branch"].startswith("docfix/g-1-")
     assert "PORT=8080 npm run dev" in opened["diff"]
-    assert "Before the fix" in opened["body"] and "@docs-owner" in opened["body"]
+    assert "Before the fix" in opened["body"] and "docs-owner role" in opened["body"]
     assert pr_title(gap(shop)).startswith("docs: fix doc gap G-1")
 
 
@@ -88,3 +88,9 @@ def test_bad_rewrite_falls_back_to_replacement(shop, tmp_path):
     r = fix_gap(gap(shop), "", tmp_path / "work", "", ("t", "t@example.com"), oc=None, llm=RewriteLLM(broken=True),
                 verifier=fake_verifier, opener=lambda *a: "https://github.com/o/shop/pull/3")
     assert r.ok and "fallback" in r.editor
+
+
+def test_pr_body_never_pings_github_users():
+    from agent.fixer import no_github_mentions
+    assert no_github_mentions("Correction by @user, for @docs-owner; mail a@b.c; `@x`") == \
+        "Correction by `@user`, for `@docs-owner`; mail a@b.c; `@x`"
