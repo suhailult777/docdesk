@@ -32,7 +32,7 @@ from typing import Any, Callable
 from .client import SwitchAgent, load_or_register
 from .config import Settings
 from .ledger import parse_handoff
-from .llm import OpenCodeLLM, opencode_env
+from .llm import LLM, OpenCodeLLM, openrouter_from_env, opencode_env
 from .verify import Verdict, compare, verify_files
 
 log = logging.getLogger("docdesk.fixer")
@@ -126,6 +126,38 @@ def edit_with_opencode(workdir: Path, gap: dict[str, Any], style: str, oc: OpenC
     return False
 
 
+REWRITE_SYSTEM = (
+    "You fix stale documentation. You get one markdown file and checked facts. Return the whole file "
+    "with only the stale parts changed, including commands in code blocks. Return the file text only, "
+    "no explanation and no surrounding code fence."
+)
+
+
+def unwrap(text: str) -> str:
+    m = re.fullmatch(r"\s*```(?:markdown|md)?\n(.*?)\n?```\s*", text, re.S)
+    return m.group(1) if m else text
+
+
+def edit_with_llm(workdir: Path, gap: dict[str, Any], style: str, llm: LLM) -> bool:
+    """Ask a chat model (OpenRouter) for each listed file rewritten; keep it only if it checks out."""
+    reps = "\n".join(f"- `{o}` is now `{n}`" for o, n in gap.get("replacements", []))
+    try:
+        for f in gap["files"]:
+            p = workdir / f
+            old = p.read_text()
+            prompt = f"Facts checked against the code:\n{reps}\n\nStyle guide:\n{style}\n\nFile {f}:\n{old}"
+            new = unwrap(llm.complete(REWRITE_SYSTEM, prompt))
+            if not new.strip() or not (0.5 * len(old) <= len(new) <= 1.5 * len(old) + 200):
+                raise ValueError(f"rewrite of {f} changed too much")
+            p.write_text(new if new.endswith("\n") else new + "\n")
+        if edit_ok(workdir, gap["files"], gap.get("replacements", [])):
+            return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("LLM rewrite failed: %s", e)
+    git(workdir, "checkout", "-q", "--", ".")
+    return False
+
+
 @dataclass
 class FixResult:
     ok: bool
@@ -174,17 +206,24 @@ def open_pr(workdir: Path, gap: dict[str, Any], branch: str, title: str, body: s
 
 def fix_gap(
     gap: dict[str, Any], handoff: str, workdir: Path, style: str, author: tuple[str, str],
-    oc: OpenCodeLLM | None = None, oc_timeout: int = 150,
+    oc: OpenCodeLLM | None = None, oc_timeout: int = 150, llm: LLM | None = None,
     verifier: Callable[[Path, list[str]], list] = verify_files,
     opener: Callable[..., str] = open_pr, progress: Callable[[str], None] = lambda s: None,
 ) -> FixResult:
     branch = f"docfix/{slug(gap['gap'])}-{time.strftime('%m%d-%H%M%S')}"
     prepare_branch(workdir, gap["repo"], branch)
     before = verifier(workdir, gap["files"])
-    editor = "OpenCode"
-    progress(f"Editing {', '.join(gap['files'])} with OpenCode (free model)...")
-    if not (oc and edit_with_opencode(workdir, gap, style, oc, oc_timeout)):
-        editor = "checked term replacement (OpenCode fallback)"
+    editor = ""
+    if llm is not None:
+        progress(f"Editing {', '.join(gap['files'])} with {llm.name} (free model)...")
+        if edit_with_llm(workdir, gap, style, llm):
+            editor = llm.name
+    if not editor and oc is not None:
+        progress(f"Editing {', '.join(gap['files'])} with OpenCode (free model)...")
+        if edit_with_opencode(workdir, gap, style, oc, oc_timeout):
+            editor = "OpenCode"
+    if not editor:
+        editor = "checked term replacement (fallback)"
         if not replace_terms(workdir, gap["files"], gap.get("replacements", [])):
             return FixResult(False, editor, [], None, error="nothing to change in the listed files")
     files = changed_files(workdir)
@@ -228,6 +267,8 @@ class Fixer:
                        env.get("DOCDESK_GIT_EMAIL") or "docdesk-fixer@users.noreply.github.com")
         self.oc = OpenCodeLLM(env.get("OPENCODE_MODEL") or "opencode/deepseek-v4.1-flash-free")
         self.oc_timeout = int(env.get("FIXER_OPENCODE_TIMEOUT") or 150)
+        # Same chat provider as DocDesk when a key is set (OpenRouter free models).
+        self.llm = openrouter_from_env(env)
         # The sandbox reads this from the process environment.
         if env.get("DOCDESK_DOCKER"):
             os.environ["DOCDESK_DOCKER"] = env["DOCDESK_DOCKER"]
@@ -294,7 +335,7 @@ class Fixer:
             try:
                 r = await asyncio.to_thread(
                     fix_gap, gap, body, self.workdir, style, self.author, self.oc, self.oc_timeout,
-                    progress=progress,
+                    llm=self.llm, progress=progress,
                 )
             except Exception as e:  # noqa: BLE001
                 log.exception("fix failed")

@@ -63,3 +63,28 @@ def test_opencode_is_locked_to_its_checkout():
     edit, read = json.loads(EDIT_ONLY)["permission"], json.loads(READ_ONLY)["permission"]
     assert edit["external_directory"] == "deny" and edit["bash"] == "deny" and edit["edit"] == "allow"
     assert set(read.values()) == {"deny"}
+
+
+class RewriteLLM:
+    name = "openrouter"
+
+    def __init__(self, broken=False):
+        self.broken = broken
+
+    def complete(self, system, prompt):
+        text = prompt.split("File README.md:\n", 1)[1]
+        if self.broken:
+            return "Sure! Here you go."
+        return "```markdown\n" + text.replace("SHOP_PORT", "PORT").replace("npm start", "npm run dev") + "```"
+
+
+def test_fix_gap_uses_the_chat_model_first(shop, tmp_path):
+    r = fix_gap(gap(shop), "", tmp_path / "work", "", ("t", "t@example.com"), oc=None, llm=RewriteLLM(),
+                verifier=fake_verifier, opener=lambda *a: "https://github.com/o/shop/pull/2")
+    assert r.ok and r.editor == "openrouter"
+
+
+def test_bad_rewrite_falls_back_to_replacement(shop, tmp_path):
+    r = fix_gap(gap(shop), "", tmp_path / "work", "", ("t", "t@example.com"), oc=None, llm=RewriteLLM(broken=True),
+                verifier=fake_verifier, opener=lambda *a: "https://github.com/o/shop/pull/3")
+    assert r.ok and "fallback" in r.editor
