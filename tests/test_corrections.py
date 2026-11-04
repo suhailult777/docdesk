@@ -61,3 +61,15 @@ def test_new_npm_script_finds_the_removed_one_in_docs(shop):
     assert ev.confirmed
     assert ev.replacements() == [("SHOP_PORT", "PORT"), ("npm start", "npm run dev")]
     assert ev.files == ["README.md"]
+
+
+def test_dropped_prefix_maps_to_parent_after_explicit_pairs(shop):
+    ev = check_correction(shop, "Outdated: the API dropped the `/api/v1` prefix. Orders go to "
+                                "`POST /api/checkout` now, not `/api/v1/orders`.")
+    assert ev.confirmed
+    assert sorted(ev.replacements()) == [("/api/v1", "/api"), ("/api/v1/orders", "/api/checkout")]
+
+
+def test_terms_only_in_tests_are_not_evidence(shop):
+    ev = check_correction(shop, "wrong, it's `/api/v1/orders` now")
+    assert not ev.confirmed

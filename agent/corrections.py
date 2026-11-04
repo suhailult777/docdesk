@@ -30,7 +30,7 @@ CORRECTION_PATTERNS = [
 # "not X", "instead of X", "no longer X", "used to be X", "X is gone" name the old term.
 OLD_MARKERS = re.compile(
     r"(?:\bnot|\binstead of|\bno longer(?: uses?| reads?| supports?)?|\bused to be|\breplaced?|\bremoved|\bdropped)"
-    r"\s+(`[^`]+`|[A-Z][A-Z0-9_]{2,}|/[\w/.:-]+|npm (?:run )?[\w:-]+)",
+    r"\s+(?:the\s+)?(`[^`]+`|[A-Z][A-Z0-9_]{2,}|/[\w/.:-]+|npm (?:run )?[\w:-]+)",
     re.I,
 )
 
@@ -88,7 +88,19 @@ class Evidence:
         """Old -> new pairs of the same kind, in the order the teammate wrote them."""
         pairs = []
         news = list(self.new_terms)
-        for old in self.old_terms:
+        olds = list(self.old_terms)
+        old_paths = [t.text for t in olds if t.kind == "path"]
+        for old in list(olds):
+            # "dropped the /api/v1 prefix": a removed path prefix of another removed path
+            # maps to its parent (/api/v1 -> /api), after the longer, explicit pairs.
+            if old.kind == "path" and any(o != old.text and o.startswith(old.text + "/") for o in old_paths):
+                olds.remove(old)
+                olds.append(Term(old.text, "prefix"))
+        for old in olds:
+            if old.kind == "prefix":
+                parent = old.text.rsplit("/", 1)[0] or "/"
+                pairs.append((old.text, parent))
+                continue
             for n in news:
                 if n.kind == old.kind:
                     pairs.append((old.text, n.text))
@@ -260,7 +272,8 @@ def is_test(path: str) -> bool:
 def gather_evidence(repo: Path, new: list[Term], old: list[Term]) -> Evidence:
     ev = Evidence(new_terms=new, old_terms=old)
     for t in new:
-        ev.code_refs[t.text] = grep(repo, t.needle(), docs=False)
+        # Only non-test code is evidence that something is true now.
+        ev.code_refs[t.text] = [r for r in grep(repo, t.needle(), docs=False) if not is_test(r.path)]
         c = last_change(repo, t.needle())
         if c:
             ev.commits[t.text] = c

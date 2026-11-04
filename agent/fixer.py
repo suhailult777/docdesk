@@ -67,7 +67,7 @@ def replace_terms(workdir: Path, files: list[str], replacements: list[list[str]]
             continue
         text = p.read_text()
         new = text
-        for old, rep in replacements:
+        for old, rep in sorted(replacements, key=lambda r: -len(r[0])):  # longest first
             new = new.replace(old, rep)
         if new != text:
             p.write_text(new)

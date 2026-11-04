@@ -94,3 +94,9 @@ def test_pr_body_never_pings_github_users():
     from agent.fixer import no_github_mentions
     assert no_github_mentions("Correction by @user, for @docs-owner; mail a@b.c; `@x`") == \
         "Correction by `@user`, for `@docs-owner`; mail a@b.c; `@x`"
+
+
+def test_replace_terms_longest_first(tmp_path):
+    (tmp_path / "a.md").write_text("GET /api/v1/products and POST /api/v1/orders\n")
+    replace_terms(tmp_path, ["a.md"], [["/api/v1", "/api"], ["/api/v1/orders", "/api/checkout"]])
+    assert (tmp_path / "a.md").read_text() == "GET /api/products and POST /api/checkout\n"
