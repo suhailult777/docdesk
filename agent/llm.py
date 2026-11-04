@@ -80,6 +80,15 @@ class GroqLLM:
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
+# OpenCode is a coding agent with tools. Answering questions needs none of them.
+READ_ONLY = '{"permission":{"edit":"deny","bash":"deny","webfetch":"deny","external_directory":"deny"}}'
+
+
+def opencode_env(config: str) -> dict[str, str]:
+    env = dict(os.environ)
+    env["OPENCODE_CONFIG_CONTENT"] = config
+    return env
+
 
 class OpenCodeLLM:
     """Runs ``opencode run -m <free model>``; no account or key needed."""
@@ -101,7 +110,7 @@ class OpenCodeLLM:
         try:
             p = subprocess.run(
                 [self.binary, "run", "-m", self.model, text],
-                capture_output=True, text=True, timeout=self.timeout, cwd="/tmp",
+                capture_output=True, text=True, timeout=self.timeout, cwd="/tmp", env=opencode_env(READ_ONLY),
                 stdin=subprocess.DEVNULL,  # opencode waits on an open stdin when run in the background
             )
         except subprocess.TimeoutExpired as e:

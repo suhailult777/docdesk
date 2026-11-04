@@ -54,3 +54,12 @@ def test_fix_gap_blocks_when_a_changed_command_fails(shop, tmp_path):
 def test_status_block_roundtrip():
     assert parse_status("done\n" + status_block({"gap": "G-2", "pr": "u"})) == {"gap": "G-2", "pr": "u"}
     assert parse_status("nothing") is None
+
+
+def test_opencode_is_locked_to_its_checkout():
+    import json
+    from agent.fixer import EDIT_ONLY
+    from agent.llm import READ_ONLY
+    edit, read = json.loads(EDIT_ONLY)["permission"], json.loads(READ_ONLY)["permission"]
+    assert edit["external_directory"] == "deny" and edit["bash"] == "deny" and edit["edit"] == "allow"
+    assert set(read.values()) == {"deny"}

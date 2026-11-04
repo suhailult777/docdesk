@@ -20,8 +20,10 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +32,7 @@ from typing import Any, Callable
 from .client import SwitchAgent, load_or_register
 from .config import Settings
 from .ledger import parse_handoff
-from .llm import OpenCodeLLM
+from .llm import OpenCodeLLM, opencode_env
 from .verify import Verdict, compare, verify_files
 
 log = logging.getLogger("docdesk.fixer")
@@ -101,13 +103,19 @@ def opencode_prompt(gap: dict[str, Any], style: str) -> str:
     )
 
 
+# The fixer may edit files in its own checkout and nothing else: no shell, no web,
+# no paths outside the working directory (OpenCode's external_directory rule).
+EDIT_ONLY = '{"permission":{"edit":"allow","bash":"deny","webfetch":"deny","external_directory":"deny"}}'
+
+
 def edit_with_opencode(workdir: Path, gap: dict[str, Any], style: str, oc: OpenCodeLLM, timeout: int) -> bool:
     if not oc.available():
         return False
     try:
         subprocess.run(
-            [oc.binary, "run", "-m", oc.model, opencode_prompt(gap, style)],
+            [oc.binary, "run", "-m", oc.model, "--dir", str(workdir), opencode_prompt(gap, style)],
             cwd=workdir, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
+            env=opencode_env(EDIT_ONLY),
         )
     except subprocess.TimeoutExpired:
         log.warning("opencode timed out after %ss", timeout)
@@ -211,7 +219,8 @@ class Fixer:
         self.agent = agent
         self.s = settings
         self.docdesk = docdesk_name
-        self.workdir = settings.state_dir / "fixer" / "repo"
+        # Outside the DocDesk tree, so the coding agent has nothing else nearby to touch.
+        self.workdir = Path(settings.env.get("FIXER_WORKDIR") or Path(tempfile.gettempdir()) / "docdesk-fixer" / "repo")
         self.lock = asyncio.Lock()
         self.seen: set[str] = set()
         env = settings.env
@@ -219,10 +228,25 @@ class Fixer:
                        env.get("DOCDESK_GIT_EMAIL") or "docdesk-fixer@users.noreply.github.com")
         self.oc = OpenCodeLLM(env.get("OPENCODE_MODEL") or "opencode/deepseek-v4.1-flash-free")
         self.oc_timeout = int(env.get("FIXER_OPENCODE_TIMEOUT") or 150)
+        # The sandbox reads this from the process environment.
+        if env.get("DOCDESK_DOCKER"):
+            os.environ["DOCDESK_DOCKER"] = env["DOCDESK_DOCKER"]
+        # Who reviews when no agent holds the docs-owner role: a person, by username.
+        self.owner_user = env.get("DOCDESK_DOCS_OWNER") or ""
 
     async def say(self, room: str, body: str, thread: str | None, names=(), roles=()) -> None:
         async with self.agent.room_lock:
-            await self.agent.op("connect_to_room", room_id=room, include_general_instructions=False)
+            info = await self.agent.op("connect_to_room", room_id=room, include_general_instructions=False)
+            if roles:
+                # Switch roles are held by agents. If nobody holds docs-owner, address the
+                # person who owns the docs instead and keep "@docs-owner" readable in the text.
+                held = {r.get("name") for r in (info or {}).get("roles", []) if r.get("held_by")}
+                missing = [r for r in roles if r not in held]
+                roles = [r for r in roles if r in held]
+                if missing:
+                    body = body.replace("Please review", " ".join(f"@{m}" for m in missing) + ": please review", 1)
+                    if self.owner_user:
+                        names = [*names, self.owner_user]
             if names or roles:
                 args: dict[str, Any] = {"body": body, "target_names": list(names), "target_roles": list(roles)}
                 if thread:
@@ -265,6 +289,8 @@ class Fixer:
             def progress(msg: str) -> None:
                 asyncio.run_coroutine_threadsafe(self.say(room, msg, thread), loop)
 
+            guard = self.s.repo_dir if (self.s.repo_dir / ".git").exists() else None
+            before = git(guard, "status", "--porcelain", check=False) if guard else ""
             try:
                 r = await asyncio.to_thread(
                     fix_gap, gap, body, self.workdir, style, self.author, self.oc, self.oc_timeout,
@@ -273,6 +299,10 @@ class Fixer:
             except Exception as e:  # noqa: BLE001
                 log.exception("fix failed")
                 r = FixResult(False, "", [], None, error=str(e)[:300])
+            if guard and git(guard, "status", "--porcelain", check=False) != before:
+                # Belt and braces: DocDesk's own checkout must never change under it.
+                log.error("DocDesk's checkout changed during the fix, restoring it")
+                git(guard, "checkout", "-q", "--", ".", check=False)
             await self.report(room, thread, gap, r)
 
     async def report(self, room: str, thread: str, gap: dict[str, Any], r: FixResult) -> None:
