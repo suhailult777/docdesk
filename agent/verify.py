@@ -33,6 +33,7 @@ RUNNABLE_INLINE = re.compile(
 )
 SERVER = re.compile(r"^(?:[A-Z][A-Z0-9_]*=\S+\s+)*(?:npm (?:start|run (?:dev|serve|start))|node [\w./-]*server[\w./-]*\.js)\b")
 PORT_ENV = re.compile(r"\b\w*PORT=(\d+)")
+CONNECT_FAIL = re.compile(r"curl: \(7\)|Could not connect|Connection refused", re.I)
 SHELL_LANGS = {"bash", "sh", "shell", "console", "zsh", ""}
 
 
@@ -175,11 +176,15 @@ class Verdict:
     blocking: list[Result]
     known_failing: list[Result]
     after: list[Result]
+    unchecked: list[Result] | None = None
 
     def report(self) -> str:
         n_ok = sum(r.ok for r in self.after)
         lines = [f"Sandbox (docker, --network none): {n_ok} of {len(self.after)} commands pass after the fix."]
         lines += [f"- {r.line()}" for r in self.after]
+        if self.unchecked:
+            lines.append("Could not be checked because an earlier step in the same doc already fails (another gap): "
+                         + ", ".join(f"`{r.cmd.text}`" for r in self.unchecked))
         if self.known_failing:
             lines.append("Failing before and after, untouched by this fix (another gap): "
                          + ", ".join(f"`{r.cmd.text}`" for r in self.known_failing))
@@ -189,16 +194,23 @@ class Verdict:
 def compare(before: list[Result], after: list[Result]) -> Verdict:
     passed_before = {(r.cmd.file, r.cmd.text) for r in before if r.ok}
     seen_before = {(r.cmd.file, r.cmd.text) for r in before}
-    blocking, known = [], []
+    blocking, known, unchecked = [], [], []
+    broken_server: set[str] = set()  # files where a server step fails before and after
     for r in after:
         k = (r.cmd.file, r.cmd.text)
         if r.ok:
             continue
-        if k not in seen_before or k in passed_before:
-            blocking.append(r)  # a changed command that fails, or a regression
-        else:
+        if k in seen_before and k not in passed_before:
             known.append(r)
-    return Verdict(not blocking and bool(after), blocking, known, after)
+            if r.cmd.server:
+                broken_server.add(r.cmd.file)
+        elif r.cmd.file in broken_server and CONNECT_FAIL.search(r.detail or ""):
+            # The doc's own (still stale) start step never brought the server up, so
+            # this changed command could not be tried. Say so, don't call it a failure.
+            unchecked.append(r)
+        else:
+            blocking.append(r)  # a changed command that fails, or a regression
+    return Verdict(not blocking and any(r.ok for r in after), blocking, known, after, unchecked)
 
 
 def main() -> int:

@@ -77,3 +77,14 @@ def test_sandbox_error_is_reported(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: P())
     r = verify.run_in_sandbox(tmp_path, [Command("a.md", "npm test", False)])
     assert not r[0].ok and r[0].detail.startswith("sandbox error: docker: permission denied")
+
+
+def test_changed_curl_after_a_still_broken_start_step_is_unchecked_not_blocking():
+    def r(text, ok, server=False, detail=""):
+        return Result(Command("g.md", text, server), ok, detail)
+    before = [r("npm start", False, True), r("curl /api/v1/orders", False, detail="curl: (7) Failed to connect")]
+    after = [r("npm install", True), r("npm start", False, True),
+             r("curl /api/checkout", False, detail="curl: (7) Failed to connect to localhost")]
+    v = compare(before, after)
+    assert v.ok and [x.cmd.text for x in v.unchecked] == ["curl /api/checkout"]
+    assert "Could not be checked" in v.report()

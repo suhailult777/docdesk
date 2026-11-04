@@ -93,7 +93,9 @@ def edit_ok(workdir: Path, files: list[str], replacements: list[list[str]]) -> b
 
 def opencode_prompt(gap: dict[str, Any], style: str) -> str:
     reps = "\n".join(f"- `{o}` is now `{n}`" for o, n in gap.get("replacements", []))
+    code = ", ".join(gap.get("code_files", [])) or "the source files"
     return (
+        f"Read {code} first: the code is the source of truth.\n"
         "You are fixing stale documentation in this git repository.\n"
         f"Edit ONLY these files: {', '.join(gap['files'])}. Do not touch any other file. Do not run git.\n"
         f"These facts were checked against the code (commits {', '.join(gap.get('commits', []))}):\n{reps}\n"
@@ -138,20 +140,35 @@ def unwrap(text: str) -> str:
     return m.group(1) if m else text
 
 
+def code_context(workdir: Path, files: list[str], limit: int = 6000) -> str:
+    out, used = [], 0
+    for f in files:
+        p = workdir / f
+        if p.exists() and used < limit:
+            text = p.read_text()[: limit - used]
+            used += len(text)
+            out.append(f"--- {f}\n{text}")
+    return "\n".join(out) or "(none)"
+
+
 def edit_with_llm(workdir: Path, gap: dict[str, Any], style: str, llm: LLM) -> bool:
     """Ask a chat model (OpenRouter) for each listed file rewritten; keep it only if it checks out."""
     reps = "\n".join(f"- `{o}` is now `{n}`" for o, n in gap.get("replacements", []))
+    code = code_context(workdir, gap.get("code_files", []))
     try:
         for f in gap["files"]:
             p = workdir / f
             old = p.read_text()
-            prompt = f"Facts checked against the code:\n{reps}\n\nStyle guide:\n{style}\n\nFile {f}:\n{old}"
+            prompt = (f"Facts checked against the code:\n{reps}\n\n"
+                      f"Current code (the source of truth when a fact is ambiguous):\n{code}\n\n"
+                      f"Style guide:\n{style}\n\nFile {f}:\n{old}")
             new = unwrap(llm.complete(REWRITE_SYSTEM, prompt))
             if not new.strip() or not (0.5 * len(old) <= len(new) <= 1.5 * len(old) + 200):
                 raise ValueError(f"rewrite of {f} changed too much")
             p.write_text(new if new.endswith("\n") else new + "\n")
         if edit_ok(workdir, gap["files"], gap.get("replacements", [])):
             return True
+        log.warning("LLM rewrite rejected: it left an old term, touched other files or changed nothing")
     except Exception as e:  # noqa: BLE001
         log.warning("LLM rewrite failed: %s", e)
     git(workdir, "checkout", "-q", "--", ".")

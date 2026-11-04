@@ -43,6 +43,7 @@ class Gap:
     files: list[str]
     replacements: list[list[str]]
     commits: list[str] = field(default_factory=list)
+    code_files: list[str] = field(default_factory=list)  # code that backs the correction
     status: str = "open"
     pr: str = ""
 
@@ -113,7 +114,7 @@ def handoff_text(gap: Gap, repo_url: str) -> str:
     """The message the fixer gets. Human readable, with a JSON block it parses."""
     payload = {
         "gap": gap.id, "repo": repo_url, "files": gap.files,
-        "replacements": gap.replacements, "commits": gap.commits,
+        "replacements": gap.replacements, "commits": gap.commits, "code_files": gap.code_files,
         "help_room_id": gap.help_room_id, "thread_id": gap.thread_id,
     }
     files = ", ".join(f"`{f}`" for f in gap.files)

@@ -165,6 +165,7 @@ class DocDesk:
                 correction=text, evidence=ev.summary(), files=ev.files,
                 replacements=[list(r) for r in ev.replacements()],
                 commits=sorted({c.sha for c in ev.commits.values()}),
+                code_files=sorted({r.path for refs in ev.code_refs.values() for r in refs})[:4],
             ))
         msg = reply_text(ev, gap.id if gap else None)
         if gap and not created:
