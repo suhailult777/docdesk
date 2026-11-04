@@ -6,7 +6,7 @@ COMPOSE := compose --profile collab --profile gateway
 DOCKER ?= docker
 export DOCDESK_ENV_FILE ?= $(CURDIR)/.env
 
-.PHONY: help install stack up down status regkey setup run demo test scan
+.PHONY: help install stack up down status regkey setup run demo test scan verify-image verify run-fixer
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -49,3 +49,9 @@ scan: ## look for secrets in tracked files before a push
 	@! git grep -nIE "(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{16,}" -- . ':!*.example' \
 	  || (echo "possible secret above, not pushing" && exit 1)
 	@echo "secret scan clean"
+
+verify-image: ## build the sandbox image used to run doc commands (docker run --network none)
+	$(DOCKER) build -q -t docdesk-verify:node20 verify/
+
+verify: ## run the commands in FILES of the demo repo in the sandbox, e.g. make verify FILES=README.md
+	DOCDESK_DOCKER="$(DOCKER)" $(PY) -m agent.verify $${DOCDESK_REPO_DIR:-demo/acme-shop} $(FILES)
