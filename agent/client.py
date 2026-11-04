@@ -168,7 +168,7 @@ class SwitchAgent:
             h["X-Switch-Connection-Id"] = self.creds.connection_id
         return h
 
-    async def op(self, name: str, with_connection: bool = True, **args: Any) -> Any:
+    async def op(self, name: str, /, with_connection: bool = True, **args: Any) -> Any:
         """Call one operation. Arguments go in the body unwrapped."""
         url = f"{self.base_url}/agents/{self.creds.agent_id}/ops/{name}"
         r = await self.http.post(url, json=args, headers=self._headers(with_connection))
