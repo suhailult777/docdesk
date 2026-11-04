@@ -54,3 +54,10 @@ def test_refuses_a_correction_the_code_does_not_back(shop):
 def test_asks_for_specifics_when_no_terms(shop):
     ev = check_correction(shop, "that's outdated")
     assert "backticks" in reply_text(ev, None)
+
+
+def test_new_npm_script_finds_the_removed_one_in_docs(shop):
+    ev = check_correction(shop, "outdated: we use `npm run dev` and the server reads `PORT` now, not `SHOP_PORT`")
+    assert ev.confirmed
+    assert ev.replacements() == [("SHOP_PORT", "PORT"), ("npm start", "npm run dev")]
+    assert ev.files == ["README.md"]

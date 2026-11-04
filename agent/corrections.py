@@ -288,7 +288,25 @@ def check_correction(repo: Path, correction: str, wrong_answer: str = "") -> Evi
         if any(in_code[n.text] and _related(t, n) for n in new) and grep(repo, t.text, docs=True):
             new.remove(t)
             old.append(t)
+    # "we use `npm run dev` now" without naming the old command: the docs'
+    # npm commands whose script no longer exists in package.json are the old ones.
+    if any(t.kind == "npm" and in_code.get(t.text) for t in new) and not any(t.kind == "npm" for t in old):
+        old += missing_npm_scripts(repo, {t.text for t in new})
     return gather_evidence(repo, new, old)
+
+
+def missing_npm_scripts(repo: Path, skip: set[str]) -> list[Term]:
+    out: list[Term] = []
+    seen = set(skip)
+    for line in _git(repo, "grep", "-h", "-o", "-I", "-E", r"npm (start|run [A-Za-z0-9:_-]+)", "--", "*.md").splitlines():
+        cmd = line.strip()
+        if cmd in seen:
+            continue
+        seen.add(cmd)
+        t = Term(cmd, "npm")
+        if not grep(repo, t.needle(), docs=False):
+            out.append(t)
+    return out
 
 
 def reply_text(ev: Evidence, gap_id: str | None) -> str:
