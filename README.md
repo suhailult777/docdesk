@@ -145,7 +145,7 @@ thread handling. GitHub Actions runs them on every push.
 - **Day 4:** video, blog post, submission.
 
 Known limits today: retrieval is keyword based (BM25), so phrasing far from the docs' words can miss; the
-OpenCode free model sometimes times out, in which case DocDesk falls back to quoting the sources.
+OpenRouter free models answer in about 4 to 10 seconds (one took 78s); if OpenRouter fails, DocDesk falls back to OpenCode and then to quoting the sources.
 
 ## Prior work
 
