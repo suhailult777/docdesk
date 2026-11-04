@@ -39,6 +39,9 @@ setup: ## register docdesk and create #acme-help and #acme-docs-maint from the t
 run: ## run the DocDesk agent (foreground)
 	$(PY) -m agent.main
 
+run-fixer: ## run the doc-fixer agent (foreground); needs gh logged in and the verify image
+	DOCDESK_DOCKER="$(DOCKER)" $(PY) -m agent.fixer
+
 demo: ## ask the seed questions in #acme-help as the teammate and print the replies
 	@while IFS= read -r q; do [ -z "$$q" ] && continue; $(PY) scripts/ask.py "@docdesk $$q" || exit 1; echo; done < demo/seed_questions.txt
 
