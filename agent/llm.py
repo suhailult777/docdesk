@@ -19,7 +19,11 @@ import subprocess
 import time
 from typing import Protocol
 
+import concurrent.futures
+
 import httpx
+
+_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm")
 
 log = logging.getLogger("docdesk.llm")
 
@@ -83,6 +87,7 @@ class OpenRouterLLM:
         # OpenRouter takes at most 3 models in the fallback list.
         self.models = ([self.model] + [m for m in fb if m != self.model])[:3]
         self.retries = retries
+        self.deadline = timeout + 15
         self.http = http or httpx.Client(timeout=timeout)
         self.sleep = sleep
 
@@ -103,8 +108,13 @@ class OpenRouterLLM:
             "X-Title": "DocDesk",
         }
         for attempt in range(self.retries + 1):
+            # httpx's timeout is per read, so a reply that trickles in can run for minutes.
+            # A hard deadline per attempt keeps DocDesk and the fixer moving.
+            fut = _POOL.submit(self.http.post, self.URL, json=self.body(system, prompt), headers=headers)
             try:
-                r = self.http.post(self.URL, json=self.body(system, prompt), headers=headers)
+                r = fut.result(timeout=self.deadline)
+            except concurrent.futures.TimeoutError as e:
+                raise LLMError(f"openrouter gave no answer within {self.deadline:.0f}s") from e
             except httpx.TimeoutException as e:
                 raise LLMError("openrouter timed out") from e
             if r.status_code == 429 and attempt < self.retries:

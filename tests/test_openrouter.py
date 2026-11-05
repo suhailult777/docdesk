@@ -63,3 +63,22 @@ def test_env_picks_model_preset_and_order():
     assert c.providers[0].model == "cohere/north-mini-code:free"
     assert c.providers[0].models[0] == "cohere/north-mini-code:free" and len(c.providers[0].models) == 3
     assert make_llm({"LLM_PROVIDER": "auto"}).providers[0].name != "openrouter"  # no key, not used
+
+
+def test_hard_deadline_on_a_reply_that_never_finishes():
+    import threading
+    gate = threading.Event()
+
+    def handler(req):
+        gate.wait(5)
+        return ok()
+
+    llm = OpenRouterLLM("k", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    llm.deadline = 0.3
+    try:
+        llm.complete("s", "q")
+        raise AssertionError("expected LLMError")
+    except LLMError as e:
+        assert "within" in str(e)
+    finally:
+        gate.set()
