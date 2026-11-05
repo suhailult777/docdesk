@@ -24,8 +24,12 @@ Built for the Flip the Switch hackathon, Track 01 (Best Business Workflow). Stat
 4. doc-fixer edits only the listed docs (a free OpenRouter model, then OpenCode, then the checked term swap),
    runs the doc's own commands in `docker run --network none` before and after, and opens a PR only if every
    changed command passes. It reports the PR to DocDesk, which updates the ledger and the original thread.
-5. The `@docs-owner` approves in chat; Switch records who approved. Nothing merges without it. *(Day 3)*
-6. DocDesk re-indexes and replies in the original thread: "Fixed in PR #N, here is the corrected answer." *(Day 3)*
+5. The docs owner replies in the `#acme-docs-maint` thread: "@doc-fixer approve G-1" (or decline). Only
+   people on the approver allowlist count; anyone else gets "Only the docs owner can approve". The fixer then
+   squash-merges the PR (or closes it) and records who approved, and when, in the ledger and the merge commit.
+6. DocDesk pulls the merged docs, re-indexes, and answers the original question again in its thread, tagging
+   the asker: "Fixed: doc gap G-1 was approved by user and merged in PR #3. Corrected answer: ..." with
+   citations at the new commit.
 
 ## How Switch is used
 
@@ -41,7 +45,7 @@ Built for the Flip the Switch hackathon, Track 01 (Best Business Workflow). Stat
 | Main agent | `!assign-agent @docdesk` in `#acme-help`, so people can ask without tagging |
 | Threads | every answer goes in the question's thread; the loop closes in the same thread |
 | Room template | [`switch/docdesk.group.template.yaml`](switch/docdesk.group.template.yaml) creates both rooms, the link, the role and the documents in one step |
-| Approvals | permission request before merge, recorded by Switch *(Day 3)* |
+| Approvals | an approve or decline message in the docs room thread, checked against an allowlist; recorded in the ledger room document and the merge commit |
 
 **What breaks without Switch:** DocDesk would be one more bot in one channel. The handoff between two
 different kinds of agent, the shared ledger both rooms can read, the role-based approval and its audit trail,
@@ -104,7 +108,28 @@ make demo                    # third terminal: asks the seed questions in #acme-
 .venv/bin/python scripts/demo_loop.py "how do I change the port?" \
   'That is outdated: we use `npm run dev` and the server reads `PORT` now, not `SHOP_PORT`.'
                              # the whole loop: answer, correction, gap, verified PR, update in the thread
+                             # add --approve to also approve as the docs owner and wait for the corrected answer
+make reset-demo              # back to the start: closes docfix PRs, restores the stale docs, clears the ledger
 ```
+
+### Who is the docs owner
+
+Switch roles are held by agents, so a person can't hold `docs-owner`. DocDesk uses two settings instead:
+
+- `DOCDESK_APPROVERS`: chat usernames allowed to approve or decline a doc fix, comma separated. If it's
+  empty, `DOCDESK_DOCS_OWNER` is used; if both are empty, nobody can approve and nothing merges.
+- `DOCDESK_DOCS_OWNER`: the person the fixer addresses when it asks for review.
+
+The usernames come from Switch's sender name for the chat message, not from the message text, so typing
+someone else's name doesn't count.
+
+### Demo reset
+
+`make reset-demo` touches only the demo repo and DocDesk's local state. It closes every open PR whose
+branch starts with `docfix/` and deletes those branches. It restores `README.md` and `docs/` from the
+baseline commit (`DOCDESK_DEMO_BASELINE`, default `3df5b73`) with a normal new commit, never a force push.
+It also clears the gap store and thread memory. Restart both agents afterwards; DocDesk rewrites the empty
+ledger when it starts.
 
 Then open Mattermost at http://localhost:8065 (user `user`, password `MATTERMOST_USER_PASSWORD` in
 `.switch-stack/.env`), open `acme-help` and ask your own question. Type `!assign-agent @docdesk` once to ask
@@ -124,7 +149,8 @@ Switch Console 0.40.1 for the fixer.
 - OpenCode runs with edit-only permissions inside its own checkout (no shell, no web, no outside paths);
   for answers it gets no tools at all.
 - Switch `@names` are put in code spans in PR bodies so GitHub never pings a stranger with the same name.
-- Merge only after a recorded `@docs-owner` approval. *(Day 3)*
+- Merge only after an approval from an allowlisted docs owner in the docs room. The fixer never merges by itself.
+- Every OpenRouter call has a hard deadline (timeout + 15 s), and the fallbacks take over after it.
 - Secrets live in `.env` (git-ignored) or a file outside the repo (`DOCDESK_ENV_FILE`); `make scan` checks
   tracked files before every push.
 
@@ -141,7 +167,8 @@ thread handling. GitHub Actions runs them on every push.
   DocDesk answering in `#acme-help` threads, Makefile, tests.
 - **Day 2 (done):** correction check with evidence, ledger room document, handoff to doc-fixer, sandbox
   verification, PR, status back to the original thread. OpenRouter free models as the main LLM.
-- **Day 3:** approval before merge, re-index and close the loop in the thread, hardening.
+- **Day 3 (done):** approval in chat before merge, re-index and corrected answer in the original thread,
+  `make reset-demo`, a hard OpenRouter deadline, fresh-clone check.
 - **Day 4:** video, blog post, submission.
 
 Known limits today: retrieval is keyword based (BM25), so phrasing far from the docs' words can miss; the
