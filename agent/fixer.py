@@ -275,6 +275,75 @@ def parse_status(body: str) -> dict[str, Any] | None:
         return None
 
 
+APPROVE = re.compile(r"\b(approve[sd]?|lgtm|ship it|merge it)\b", re.I)
+DECLINE = re.compile(r"\b(decline[sd]?|reject(?:ed)?|don'?t merge|close it)\b", re.I)
+GAP_ID = re.compile(r"\bG-\d+\b", re.I)
+
+
+def parse_decision(body: str) -> str | None:
+    """'approve' / 'decline' / None. A decline wins if both words appear."""
+    if DECLINE.search(body):
+        return "decline"
+    if APPROVE.search(body):
+        return "approve"
+    return None
+
+
+def approvers_from_env(env: dict[str, str]) -> set[str]:
+    """Who may approve a doc fix: DOCDESK_APPROVERS (comma list of chat usernames),
+    else DOCDESK_DOCS_OWNER. Empty means nobody can, so nothing merges."""
+    raw = env.get("DOCDESK_APPROVERS") or env.get("DOCDESK_DOCS_OWNER") or ""
+    return {u.strip().lstrip("@").lower() for u in raw.split(",") if u.strip()}
+
+
+def merge_pr(repo: str, pr_url: str, decision: str, approver: str, gh: str = "gh") -> str:
+    """Squash-merge (or close) the PR after a recorded decision. Returns the merge commit or ''."""
+    num = pr_url.rstrip("/").rsplit("/", 1)[-1]
+    if decision == "approve":
+        argv = [gh, "pr", "merge", num, "--repo", repo, "--squash", "--delete-branch",
+                "--subject", f"docs: doc fix approved in Switch by {approver} (#{num})"]
+    else:
+        argv = [gh, "pr", "close", num, "--repo", repo, "--delete-branch",
+                "--comment", f"Declined in Switch room acme-docs-maint by the docs owner ({approver})."]
+    p = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+    if p.returncode != 0:
+        raise RuntimeError(f"gh pr {'merge' if decision == 'approve' else 'close'} failed: {p.stderr.strip()[:300]}")
+    if decision != "approve":
+        return ""
+    q = subprocess.run([gh, "pr", "view", num, "--repo", repo, "--json", "mergeCommit", "--jq", ".mergeCommit.oid"],
+                       capture_output=True, text=True, timeout=60)
+    return q.stdout.strip()[:7]
+
+
+class PRBook:
+    """Open doc-fix PRs this fixer opened, by gap id, kept on disk across restarts."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.data: dict[str, dict[str, Any]] = json.loads(path.read_text()) if path.exists() else {}
+
+    def put(self, gap_id: str, **entry: Any) -> None:
+        self.data[gap_id] = entry
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.data, indent=1))
+
+    def pop(self, gap_id: str) -> None:
+        self.data.pop(gap_id, None)
+        self.path.write_text(json.dumps(self.data, indent=1))
+
+    def for_message(self, body: str, thread: str | None) -> tuple[str, dict[str, Any]] | None:
+        m = GAP_ID.search(body)
+        if m and m.group(0).upper() in self.data:
+            gid = m.group(0).upper()
+            return gid, self.data[gid]
+        for gid, e in self.data.items():
+            if thread and thread == e.get("maint_thread"):
+                return gid, e
+        if len(self.data) == 1:  # only one PR waiting: "approve" is about it
+            return next(iter(self.data.items()))
+        return None
+
+
 class Fixer:
     def __init__(self, agent: Any, settings: Settings, docdesk_name: str = "docdesk"):
         self.agent = agent
@@ -285,6 +354,8 @@ class Fixer:
         self.lock = asyncio.Lock()
         self.seen: set[str] = set()
         env = settings.env
+        self.approvers = approvers_from_env(env)
+        self.prs = PRBook(settings.state_dir / "fixer_prs.json")
         self.author = (env.get("DOCDESK_GIT_NAME") or "docdesk-fixer",
                        env.get("DOCDESK_GIT_EMAIL") or "docdesk-fixer@users.noreply.github.com")
         self.oc = OpenCodeLLM(env.get("OPENCODE_MODEL") or "opencode/deepseek-v4.1-flash-free")
@@ -340,6 +411,9 @@ class Fixer:
             return
         gap = parse_handoff(body)
         if not gap:
+            if parse_decision(body) and parse_status(body) is None:
+                self.seen.add(mid)
+                await self.on_decision(data)
             return
         self.seen.add(mid)
         room = data["room_id"]
@@ -368,15 +442,52 @@ class Fixer:
                 git(guard, "checkout", "-q", "--", ".", check=False)
             await self.report(room, thread, gap, r)
 
+    async def on_decision(self, data: dict[str, Any]) -> None:
+        """The docs owner says approve or decline in the docs room. Only allowlisted people count."""
+        p = data["payload"]
+        room = data["room_id"]
+        who = (p.get("sender_name") or "").lower()
+        thread = p.get("thread_id") or p.get("message_id")
+        found = self.prs.for_message(p.get("body") or "", p.get("thread_id"))
+        if not found:
+            await self.say(room, "I have no doc-fix PR waiting for a decision. Name the gap, for example: approve G-2.", thread)
+            return
+        gid, e = found
+        decision = parse_decision(p.get("body") or "")
+        if who not in self.approvers:
+            log.warning("ignored %s from %r: not an approver", decision, who)
+            await self.say(room, f"Only the docs owner can approve or decline {gid}. I didn't change anything.", thread)
+            return
+        async with self.lock:
+            t0 = time.monotonic()
+            try:
+                sha = await asyncio.to_thread(merge_pr, e["repo"], e["pr"], decision, who)
+            except Exception as ex:  # noqa: BLE001
+                await self.say(room, f"{decision} for {gid} was recorded, but GitHub refused: {str(ex)[:200]}", thread)
+                return
+            self.prs.pop(gid)
+            stamp = time.strftime("%Y-%m-%d %H:%M %Z")
+            if decision == "approve":
+                status = {"gap": gid, "status": f"merged {sha}, approved by {who} ({stamp})", "pr": e["pr"],
+                          "merged": sha, "approved_by": who}
+                text = f"{who} approved {gid}. Merged {e['pr']} as {sha} in {time.monotonic() - t0:.0f}s."
+            else:
+                status = {"gap": gid, "status": f"declined by {who} ({stamp})", "pr": e["pr"], "declined_by": who}
+                text = f"{who} declined {gid}. Closed {e['pr']} without merging."
+            await self.say(room, text + "\n\n" + status_block(status), e.get("maint_thread") or thread,
+                           names=[self.docdesk])
+
     async def report(self, room: str, thread: str, gap: dict[str, Any], r: FixResult) -> None:
         if r.ok:
+            self.prs.put(gap["gap"], pr=r.pr_url, repo=re.sub(r"^https://github.com/", "", gap["repo"]).rstrip("/"),
+                         maint_thread=thread)
             partly = bool(r.verdict and r.verdict.unchecked)
             label = "PR open, verified, some steps wait on another gap" if partly else "PR open, verified"
             status = {"gap": gap["gap"], "status": label, "pr": r.pr_url,
                       "help_room_id": gap.get("help_room_id"), "thread_id": gap.get("thread_id")}
             body = (f"Doc fix for {gap['gap']} is ready for review: {r.pr_url}\n"
                     f"Changed: {', '.join(f'`{f}`' for f in r.files)} (edited with {r.editor}).\n"
-                    f"{r.verdict.report()}\nI won't merge it. Please review and approve or decline here.\n\n"
+                    f"{r.verdict.report()}\nI won't merge it on my own. Please review, then reply here: approve {gap['gap']} or decline {gap['gap']}, mentioning me.\n\n"
                     + status_block(status))
             await self.say(room, body, thread, names=[self.docdesk], roles=["docs-owner"])
         else:
