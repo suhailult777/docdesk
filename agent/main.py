@@ -248,6 +248,15 @@ async def run(settings: Settings) -> None:
         fixer=settings.env.get("DOCDESK_FIXER_NAME") or "doc-fixer",
     )
     agent.on("message", desk.on_message)
+
+    async def first_sync(_: dict[str, Any]) -> None:
+        # Rewrite the ledger from disk once per start (empty after `make reset-demo`).
+        if desk.ledger and not getattr(desk, "_synced", False):
+            desk._synced = True
+            async with desk.room_lock:
+                await desk.ledger.sync()
+
+    agent.on("connection_state", first_sync)
     await agent.run()
 
 

@@ -13,6 +13,7 @@ Reads MATTERMOST_URL, MATTERMOST_TEAM, MATTERMOST_USER, MATTERMOST_PASSWORD.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -45,6 +46,8 @@ def main() -> int:
     ap.add_argument("question")
     ap.add_argument("correction")
     ap.add_argument("--wait", type=int, default=420)
+    ap.add_argument("--approve", action="store_true",
+                    help="then approve the PR in #acme-docs-maint as this user and wait for the corrected answer")
     a = ap.parse_args()
     env = load_env()
     c = httpx.Client(base_url=env.get("MATTERMOST_URL", "http://localhost:8065"), timeout=30)
@@ -85,6 +88,7 @@ def main() -> int:
             stamp(f"#acme-docs-maint:\n{p['message']}\n")
             if "docdesk-status" in p["message"]:
                 pr_seen = True
+                status_post = p
         time.sleep(3)
     if not pr_seen:
         stamp("doc-fixer did not report in time")
@@ -93,7 +97,21 @@ def main() -> int:
     if upd:
         stamp(f"back in the original #acme-help thread:\n{upd['message']}")
     stamp(f"loop took {time.time() - t_start:.0f}s")
-    return 0 if upd else 1
+    if not (a.approve and upd and "/pull/" in upd["message"]):
+        return 0 if upd else 1
+    gap = re.search(r"G-\d+", upd["message"]).group(0)
+    t_ok = time.time()
+    root = status_post.get("root_id") or status_post["id"]
+    c.post("/api/v4/posts", json={"channel_id": maint_ch["id"], "root_id": root,
+                                   "message": f"@doc-fixer approve {gap}"})
+    stamp(f"#acme-docs-maint, as the docs owner: @doc-fixer approve {gap}")
+    fixed = wait_thread(c, q["id"], me, upd["create_at"], 240, contains="Fixed:")
+    if not fixed:
+        stamp("no corrected answer in time")
+        return 1
+    stamp(f"back in the original thread after the merge:\n{fixed['message']}")
+    stamp(f"approve -> merged -> corrected answer took {time.time() - t_ok:.0f}s; whole loop {time.time() - t_start:.0f}s")
+    return 0
 
 
 if __name__ == "__main__":

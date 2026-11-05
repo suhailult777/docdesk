@@ -6,7 +6,7 @@ COMPOSE := compose --profile collab --profile gateway
 DOCKER ?= docker
 export DOCDESK_ENV_FILE ?= $(CURDIR)/.env
 
-.PHONY: help install stack up down status regkey setup run demo test scan verify-image verify run-fixer
+.PHONY: help install stack up down status regkey setup run demo test scan verify-image verify run-fixer reset-demo
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -44,6 +44,9 @@ run-fixer: ## run the doc-fixer agent (foreground); needs gh logged in and the v
 
 demo: ## ask the seed questions in #acme-help as the teammate and print the replies
 	@while IFS= read -r q; do [ -z "$$q" ] && continue; $(PY) scripts/ask.py "@docdesk $$q" || exit 1; echo; done < demo/seed_questions.txt
+
+reset-demo: ## close docfix PRs, restore the stale demo docs, clear the ledger (then restart the agents)
+	$(PY) scripts/reset_demo.py
 
 test: ## run the unit tests (no network, no keys)
 	$(PY) -m pytest -q
