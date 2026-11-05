@@ -109,3 +109,21 @@ async def test_fixer_status_updates_ledger_and_original_thread(shop, tmp_path):
     # a status from anyone but the fixer is ignored
     await d.on_message(msg("@docdesk " + st.replace("G-1", "G-1"), sender="mallory", mid="s2"))
     assert len(fa.replies) == 3
+
+
+async def test_merge_status_reindexes_and_reanswers_in_the_original_thread(shop, tmp_path):
+    from agent.fixer import status_block
+    d, fa = loop_desk(shop, tmp_path)
+    await d.on_message(msg("@docdesk how do I change the port?", mid="q1"))
+    await d.on_message(msg("outdated, it's `PORT` now, not `SHOP_PORT`", mid="c1", thread="q1"))
+    # the merged fix lands in the repo
+    from tests.conftest import commit
+    commit(shop, {"README.md": "# shop\n\nSet `PORT` to change the port:\n\n```bash\nPORT=8080 npm run dev\n```\n"},
+           "docs: fix doc gap G-1")
+    st = status_block({"gap": "G-1", "status": "merged abc1234, approved by user", "pr": "https://x/pull/7",
+                       "merged": "abc1234", "approved_by": "user"})
+    await d.on_message(msg("@docdesk " + st, sender="doc-fixer", mid="s1", thread="h1"))
+    room, thread, body = fa.replies[-1]
+    assert thread == "q1" and body.startswith("@user Fixed: doc gap G-1 was approved by user")
+    assert "`PORT`" in body and "SHOP_PORT" not in body and d.index.sha[:7] in body
+    assert "merged abc1234" in d.gaps.find("G-1").status

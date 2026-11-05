@@ -186,6 +186,14 @@ class DocDesk:
             return
         async with self.room_lock:
             await self.ledger.sync()
+        if st.get("merged"):
+            await self.close_loop(g, st)
+            return
+        if st.get("declined_by"):
+            msg = (f"Update on doc gap {g.id}: the docs owner ({st['declined_by']}) declined the fix in {g.pr}, "
+                   "so the docs stay as they are for now.")
+            await self.agent.reply(g.help_room_id, msg, g.thread_id)
+            return
         if g.pr and "another gap" in g.status:
             msg = (f"Update on doc gap {g.id}: the doc fix is in {g.pr}. The commands it changed were run in a "
                    "sandbox; some could only be tried once another open doc gap is fixed. "
@@ -197,6 +205,29 @@ class DocDesk:
             msg = f"Update on doc gap {g.id}: the fixer could not make a fix that passes its own checks yet, so a person will look."
         await self.agent.reply(g.help_room_id, msg, g.thread_id)
         log.info("%s is now %r %s", g.id, g.status, g.pr)
+
+    def reindex(self) -> None:
+        """Pull the merged docs and rebuild the index, so answers cite the new commit."""
+        if not self.repo_dir:
+            return
+        subprocess.run(["git", "-C", str(self.repo_dir), "pull", "--ff-only", "-q"], check=False, timeout=30,
+                       capture_output=True)
+        self.index = RepoIndex.from_repo(self.repo_dir, self.repo_url or None)
+
+    async def close_loop(self, g: Gap, st: dict[str, Any]) -> None:
+        """After the merge: re-read the repo, answer the original question again, in its thread."""
+        t0 = time.monotonic()
+        old_sha = self.index.sha[:7]
+        await asyncio.to_thread(self.reindex)
+        async with self.llm_lock:
+            a = await asyncio.to_thread(answer, g.question, self.index, self.llm)
+        who = f"@{g.asker} " if g.asker else ""
+        msg = (f"{who}Fixed: doc gap {g.id} was approved by {st.get('approved_by')} and merged in {g.pr} "
+               f"(commit `{st.get('merged')}`). I re-read the repo ({old_sha} -> {self.index.sha[:7]}). "
+               f"Corrected answer to \"{g.question}\":\n\n{a.text}")
+        await self.agent.reply(g.help_room_id, msg, g.thread_id)
+        self.threads.put(g.thread_id, question=g.question, answer=a.text, asker=g.asker, room=g.help_room_id)
+        log.info("closed the loop for %s in %.1fs, now at %s", g.id, time.monotonic() - t0, self.index.sha[:7])
 
 
 async def run(settings: Settings) -> None:
